@@ -4,7 +4,6 @@ import UIKit
 public class SwiftFlutterBluetoothPrintPlugin: NSObject, FlutterPlugin {
     
     static var peripherals = [CBPeripheral]()
-    static var scanChannel: FlutterBasicMessageChannel?
     
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = SwiftFlutterBluetoothPrintPlugin()
@@ -22,8 +21,8 @@ public class SwiftFlutterBluetoothPrintPlugin: NSObject, FlutterPlugin {
         registrar.addMethodCallDelegate(instance, channel: closeChannel)
         
         // 扫描外设
-        scanChannel = FlutterBasicMessageChannel(name: "com.MingNiao/scan", binaryMessenger: registrar.messenger())
-        scanChannel?.setMessageHandler({ (message, reply) in
+        let scanChannel = FlutterBasicMessageChannel(name: "com.MingNiao/scan", binaryMessenger: registrar.messenger())
+        scanChannel.setMessageHandler({ (message, _) in
             var services = [CBUUID]()
             if let uuid = message as? String {
                 services.append(CBUUID(string: uuid))
@@ -38,9 +37,36 @@ public class SwiftFlutterBluetoothPrintPlugin: NSObject, FlutterPlugin {
                 peripherals.append(peripheral)
                 let info: [String: String] = ["UUID": peripheral.identifier.uuidString, "name": peripheral.name ?? ""]
                 // 回调设备 UUID, 设备名称
-                scanChannel?.sendMessage(info)
+                scanChannel.sendMessage(info)
             }
         })
+        
+        // 连接外设
+        let connectChannel = FlutterMethodChannel(name: "com.MingNiao/connect", binaryMessenger: registrar.messenger())
+        registrar.addMethodCallDelegate(instance, channel: connectChannel)
+        
+        // 连接外设回调连接状态
+        let connectStateChannel = FlutterBasicMessageChannel(name: "com.MingNiao/connect_state", binaryMessenger: registrar.messenger())
+        connectStateChannel.setMessageHandler { (message, _) in
+            guard let dict = message as? [String: Any],
+                let uuid = dict["uuid"] as? String,
+                let timeout = dict["timeout"] as? UInt,
+                let peripheral = (SwiftFlutterBluetoothPrintPlugin.peripherals.filter { $0.identifier.uuidString.elementsEqual(uuid) }).first
+                else {
+                    return
+            }
+            BluetoothConnectTool.connectPeripheral(peripheral, options: nil, timeout: timeout) { (state) in
+                connectStateChannel.sendMessage(state.rawValue)
+            }
+        }
+        
+        // 获取打印指令
+        let commandChannel = FlutterMethodChannel(name: "com.MingNiao/command", binaryMessenger: registrar.messenger())
+        registrar.addMethodCallDelegate(instance, channel: commandChannel)
+        
+        // 写数据
+        let writeDataChannel = FlutterMethodChannel(name: "com.MingNiao/write_data", binaryMessenger: registrar.messenger())
+        registrar.addMethodCallDelegate(instance, channel: writeDataChannel)
     }
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -53,6 +79,34 @@ public class SwiftFlutterBluetoothPrintPlugin: NSObject, FlutterPlugin {
             BluetoothConnectTool.stopScan()
         case "close": // 关闭连接
             BluetoothConnectTool.close()
+        case "connect": // 连接外设
+            guard let args = call.arguments as? [String],
+                let uuid = args.first,
+                let peripheral = (SwiftFlutterBluetoothPrintPlugin.peripherals.filter { $0.identifier.uuidString.elementsEqual(uuid) }).first
+                else {
+                    return
+            }
+            BluetoothConnectTool.connectPeripheral(peripheral, options: nil)
+        case "command": // 获取打印指令
+            guard let args = call.arguments as? [Any],
+                let infos = args.first as? [Any],
+                let dpi = args.last as? CGFloat
+                else {
+                    return
+            }
+            let commandTool = TscCommandTool(infos: infos)
+            if let commands = commandTool?.createCommands(dpi: dpi) {
+                result(commands)
+            }
+        case "writeData": // 写数据
+            guard let dict = call.arguments as? [String: Any],
+                let datas = dict["data"] as? [Data]
+                else {
+                    return
+            }
+            datas.forEach { (data) in
+                BluetoothConnectTool.writeData(data)
+            }
         default:
             break
         }
