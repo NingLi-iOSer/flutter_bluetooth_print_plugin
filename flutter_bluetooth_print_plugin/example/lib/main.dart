@@ -1,7 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
-
-import 'package:flutter/services.dart';
 import 'package:flutter_bluetooth_print_plugin/flutter_bluetooth_print_plugin.dart';
 
 void main() => runApp(MyApp());
@@ -12,31 +9,20 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  String _platformVersion = 'Unknown';
+
+  // 蓝牙状态
+  BluetoothState _bluetoothState = BluetoothState.unknown;
+  // 设备信息
+  List<Map> peripheralInfoList = [];
 
   @override
   void initState() {
     super.initState();
-    initPlatformState();
-  }
 
-  // Platform messages are asynchronous, so we initialize in an async method.
-  Future<void> initPlatformState() async {
-    String platformVersion;
-    // Platform messages may fail, so we use a try/catch PlatformException.
-    try {
-      platformVersion = await FlutterBluetoothPrintPlugin.platformVersion;
-    } on PlatformException {
-      platformVersion = 'Failed to get platform version.';
-    }
-
-    // If the widget was removed from the tree while the asynchronous platform
-    // message was in flight, we want to discard the reply rather than calling
-    // setState to update our non-existent appearance.
-    if (!mounted) return;
-
-    setState(() {
-      _platformVersion = platformVersion;
+    FlutterBluetoothPrintPlugin.receivePeripheralInfo((value) {
+      setState(() {
+        peripheralInfoList.add(value);
+      });
     });
   }
 
@@ -48,9 +34,69 @@ class _MyAppState extends State<MyApp> {
           title: const Text('Plugin example app'),
         ),
         body: Center(
-          child: Text('Running on: $_platformVersion\n'),
+          child: Column(
+            children: <Widget>[
+              RaisedButton(
+                child: Text('获取蓝牙状态'),
+                onPressed: () {
+                  FlutterBluetoothPrintPlugin.bluetoothState.then((value) {
+                    setState(() {
+                      _bluetoothState = value;
+                      if (value == BluetoothState.poweredOn) { // 扫描设备
+                        _scanPeripheral();
+                      }
+                    });
+                  });
+                },
+              ),
+              Container(
+                child: Text(_getBluetoothStateText()),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: peripheralInfoList.length,
+                  itemBuilder: (context, index) {
+                    return ListTile(
+                      title: Text(peripheralInfoList[index]['name']),
+                      subtitle: Text(peripheralInfoList[index]['UUID']),
+                    );
+                  },
+                ),
+              )
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  String _getBluetoothStateText() {
+    switch (_bluetoothState) {
+      case BluetoothState.unknown:
+        return '未知';
+        break;
+      case BluetoothState.unsupported:
+        return '蓝牙不支持';
+        break;
+      case BluetoothState.unauthorized:
+        return '蓝牙未授权';
+        break;
+      case BluetoothState.resetting:
+        return '蓝牙正在重置';
+        break;
+      case BluetoothState.poweredOff:
+        return '蓝牙未开启';
+        break;
+      case BluetoothState.poweredOn:
+        return '蓝牙已开启';
+        break;
+      default:
+        return '';
+    }
+  }
+
+  // 扫描设备
+  _scanPeripheral() async {
+    FlutterBluetoothPrintPlugin.scanPeripheral(null);
   }
 }
